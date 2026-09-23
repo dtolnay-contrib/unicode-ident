@@ -43,7 +43,7 @@
 //!
 //! | | static storage | 0% nonascii | 1% | 10% | 100% nonascii |
 //! |---|---|---|---|---|---|
-//! | **`unicode-ident`** | 10.3 K | 0.36 ns | 0.37 ns | 0.37 ns | 0.43 ns |
+//! | **`unicode-ident`** | 10.4 K | 0.36 ns | 0.37 ns | 0.37 ns | 0.43 ns |
 //! | **`unicode-xid`** | 12.2 K | 1.63 ns | 1.70 ns | 1.82 ns | 4.56 ns |
 //! | **`ucd-trie`** | 10.8 K | 1.01 ns | 0.73 ns | 0.97 ns | 1.09 ns |
 //! | **`fst`** | 149 K | 22.0 ns | 21.9 ns | 20.9 ns | 10.5 ns |
@@ -222,7 +222,7 @@
 //!
 //! This crate stores one 512-bit "row" of the above bitmaps in the leaf level
 //! of a trie, and a single additional level to index into the leafs. There are
-//! 134 unique 512-bit chunks across the two bitmaps.
+//! 137 unique 512-bit chunks across the two bitmaps.
 //!
 //! The chunk size of 512 bits is selected as the size that minimizes the total
 //! size of the data structure. A smaller chunk, like 256 or 128 bits, would
@@ -233,10 +233,18 @@
 //! The chunk data is compressed using the Kuhn–Munkres algorithm for bipartite
 //! matching to eliminate redundancies between the second half of any chunk and
 //! the first half of any other chunk. This achieves an additional 9%
-//! compression of the leaf level, leaving 122 chunks that can be indexed at the
+//! compression of the leaf level, leaving 126 chunks that can be indexed at the
 //! half-chunk level using an 8-bit index. Note that this is not the same as
 //! using chunks which are half the size, because it does not necessitate
 //! raising the size of the trie's first level.
+//!
+//! An 8-bit half-chunk index reaches only 128.5 chunks past whichever address
+//! it is relative to. To keep that from capping how many chunks the leaf level
+//! is able to hold, the XID\_Start and XID\_Continue lookups index the leaf
+//! level relative to two different base addresses. Only 34 of the 126 chunks
+//! are reachable by both of the two properties; those are laid out in the
+//! overlap of the two 128.5-chunk windows, while the remaining chunks fall in
+//! whichever one window has any use for them.
 //!
 //! In contrast to binary search or the `ucd-trie` crate, performing lookups in
 //! this data structure is straight-line code with no need for branching.
@@ -254,7 +262,8 @@ mod tables;
 
 pub use crate::tables::UNICODE_VERSION;
 use crate::tables::{
-    ASCII_CONTINUE, ASCII_START, CHUNK, LEAF, TRIE_CONTINUE, TRIE_START, ZERO_CONTINUE, ZERO_START,
+    ASCII_CONTINUE, ASCII_START, CHUNK, LEAF, LEAF_CONTINUE, LEAF_START, TRIE_CONTINUE, TRIE_START,
+    ZERO_CONTINUE, ZERO_START,
 };
 
 /// Whether the character has the Unicode property XID\_Start.
@@ -266,7 +275,7 @@ pub fn is_xid_start(ch: char) -> bool {
         .0
         .get(ch as usize / 8 / CHUNK)
         .unwrap_or(&TRIE_START.0[ZERO_START]);
-    let offset = chunk as usize * CHUNK / 2 + ch as usize / 8 % CHUNK;
+    let offset = LEAF_START + chunk as usize * CHUNK / 2 + ch as usize / 8 % CHUNK;
     unsafe { LEAF.0.get_unchecked(offset) }.wrapping_shr(ch as u32 % 8) & 1 != 0
 }
 
@@ -279,6 +288,6 @@ pub fn is_xid_continue(ch: char) -> bool {
         .0
         .get(ch as usize / 8 / CHUNK)
         .unwrap_or(&TRIE_CONTINUE.0[ZERO_CONTINUE]);
-    let offset = chunk as usize * CHUNK / 2 + ch as usize / 8 % CHUNK;
+    let offset = LEAF_CONTINUE + chunk as usize * CHUNK / 2 + ch as usize / 8 % CHUNK;
     unsafe { LEAF.0.get_unchecked(offset) }.wrapping_shr(ch as u32 % 8) & 1 != 0
 }
